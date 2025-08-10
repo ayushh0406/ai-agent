@@ -1,7 +1,4 @@
-"""
-Voice-Controlled AI Agent (Jarvis-Type)
-Main runner for voice command processing with pydantic-ai
-"""
+
 import os
 import sys
 import speech_recognition as sr
