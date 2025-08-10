@@ -1,7 +1,4 @@
-"""
-Setup script for Voice AI Agent
-Installs all required packages and sets up the environment
-"""
+
 import subprocess
 import sys
 import os
