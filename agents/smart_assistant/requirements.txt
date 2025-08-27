@@ -1,0 +1,25 @@
+# Smart Assistant Agent Requirements
+# Enhanced AI agent with advanced capabilities
+
+# Core AI and API
+pydantic-ai>=0.0.1
+groq>=0.4.1
+
+# Voice Recognition and TTS
+SpeechRecognition>=3.10.0
+pyttsx3>=2.90
+pyaudio>=0.2.11
+
+# File and Data Processing
+python-dotenv>=1.0.0
+pathlib2>=2.3.7
+
+# Enhanced Features
+requests>=2.31.0
+numpy>=1.24.0
+pandas>=2.0.0
+
+# Development and Testing
+pytest>=7.4.0
+black>=23.0.0
+flake8>=6.0.0
