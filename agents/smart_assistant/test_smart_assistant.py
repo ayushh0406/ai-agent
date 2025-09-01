@@ -1,97 +1,132 @@
+    
 """
-Test Suite for ARIA Smart Assistant
+Test Suite for ARIA Smart Assistant (pytest version)
 Advanced testing for enhanced AI agent capabilities
 """
-import sys
+from __future__ import annotations
+
 import json
-import tempfile
+import os
 from pathlib import Path
-from unittest.mock import Mock, patch
+from typing import Dict, List
 
-# Add project root to path
-sys.path.append(str(Path(__file__).parent.parent.parent))
+import pytest
 
-def test_smart_assistant_initialization():
-    """Test ARIA Smart Assistant initialization"""
-    print("🧪 Testing ARIA Smart Assistant Initialization...")
-    
-    try:
-        # Mock environment variables to avoid requiring actual API keys
-        with patch.dict('os.environ', {'GROQ_API_KEY': 'test_key', 'TTS_ENABLED': 'false'}):
-            # Mock the external dependencies
-            with patch('speech_recognition.Recognizer'), \
-                 patch('speech_recognition.Microphone'), \
-                 patch('pyttsx3.init'), \
-                 patch('groq.Groq'):
-                
-                from smart_runner import SmartAssistant
-                
-                assistant = SmartAssistant()
-                
-                # Test basic properties
-                assert assistant.name == "ARIA"
-                assert hasattr(assistant, 'memory')
-                assert hasattr(assistant, 'conversation_history')
-                
-                print("   ✅ ARIA initialized successfully")
-                print("   ✅ Memory system loaded")
-                print("   ✅ Conversation history initialized")
-                
-    except Exception as e:
-        print(f"   ❌ Initialization failed: {e}")
-        return False
-    
-    print("✅ ARIA Smart Assistant initialization tests passed!\n")
-    return True
 
-def test_memory_system():
-    """Test ARIA's memory and learning capabilities"""
-    print("🧪 Testing ARIA Memory System...")
-    
-    try:
-        # Create temporary memory file
-        with tempfile.NamedTemporaryFile(mode='w', delete=False, suffix='.json') as f:
-            test_memory = {
-                'preferences': {'voice_speed': 'normal'},
-                'frequent_tasks': [{'action': 'file_creation', 'count': 5}],
-                'user_profile': {'name': 'Test User'},
-                'conversation_patterns': ['greeting', 'file_ops']
-            }
-            json.dump(test_memory, f)
-            temp_path = f.name
-        
-        # Test memory loading
-        with open(temp_path, 'r') as f:
-            loaded_memory = json.load(f)
-        
-        assert 'preferences' in loaded_memory
-        assert 'frequent_tasks' in loaded_memory
-        assert loaded_memory['user_profile']['name'] == 'Test User'
-        
-        print("   ✅ Memory persistence working")
-        print("   ✅ User preferences stored")
-        print("   ✅ Task patterns tracked")
-        
-        # Cleanup
-        Path(temp_path).unlink()
-        
-    except Exception as e:
-        print(f"   ❌ Memory system test failed: {e}")
-        return False
-    
-    print("✅ ARIA Memory system tests passed!\n")
-    return True
+# ---------------------------
+# Shared fixtures & utilities
+# ---------------------------
 
-def test_smart_file_operations():
-    """Test ARIA's enhanced file operations"""
-    print("🧪 Testing ARIA Smart File Operations...")
-    
-    try:
-        # Test smart file creation logic
-        def mock_create_smart_file(filename, content, file_type, template):
-            """Mock implementation of smart file creation"""
-            if template == "professional" and file_type == "email":
-                enhanced_content = f"""Subject: {filename}
+@pytest.fixture(scope="session")
+def have_smart_assistant():
+    """
+    Try importing SmartAssistant. If unavailable, skip relevant tests gracefully.
+    """
+    smart_runner = pytest.importorskip(
+        "smart_runner",
+        reason="smart_runner module not found; skipping SmartAssistant tests.",
+    )
+    return smart_runner
+
+
+@pytest.fixture
+def mock_external_deps(monkeypatch):
+    """
+    Mock external dependencies that require hardware, services, or API keys.
+    """
+    # Environment
+    monkeypatch.setenv("GROQ_API_KEY", "test_key")
+    monkeypatch.setenv("TTS_ENABLED", "false")
+
+    # speech_recognition mocks
+    class _DummyRecognizer:
+        def __init__(self, *_, **__): ...
+        def listen(self, *_, **__): return b""
+        def recognize_google(self, *_, **__): return "hello"
+
+    class _DummyMicrophone:
+        def __init__(self, *_, **__): ...
+        def __enter__(self): return self
+        def __exit__(self, *exc): return False
+
+    monkeypatch.setitem(pytest.sys.modules, "speech_recognition", type("M", (), {
+        "Recognizer": _DummyRecognizer,
+        "Microphone": _DummyMicrophone,
+    }))
+
+    # pyttsx3 mock
+    class _DummyTTS:
+        def setProperty(self, *_, **__): ...
+        def say(self, *_, **__): ...
+        def runAndWait(self): ...
+
+    def _pyttsx3_init(*_, **__):
+        return _DummyTTS()
+
+    monkeypatch.setitem(pytest.sys.modules, "pyttsx3", type("M", (), {
+        "init": staticmethod(_pyttsx3_init)
+    }))
+
+    # groq client mock
+    class _DummyGroqClient:
+        def __init__(self, *_, **__): ...
+        def __getattr__(self, _):  # any attr access returns a dummy callable
+            return lambda *a, **k: {"choices": [{"message": {"content": "ok"}}]}
+
+    monkeypatch.setitem(pytest.sys.modules, "groq", type("M", (), {
+        "Groq": _DummyGroqClient
+    }))
+
+
+# ---------------------------
+# Smart Assistant initialization
+# ---------------------------
+
+def test_smart_assistant_initialization(have_smart_assistant, mock_external_deps):
+    """ARIA Smart Assistant should initialize with name, memory, and conversation history."""
+    SmartAssistant = have_smart_assistant.SmartAssistant
+
+    assistant = SmartAssistant()
+
+    assert getattr(assistant, "name", None) == "ARIA"
+    assert hasattr(assistant, "memory"), "Assistant should have a memory attribute"
+    assert hasattr(assistant, "conversation_history"), "Assistant should have conversation history"
+    assert isinstance(assistant.conversation_history, list)
+
+
+# ---------------------------
+# Memory system
+# ---------------------------
+
+def test_memory_system_roundtrip(tmp_path: Path):
+    """Memory JSON should persist and load correctly."""
+    memory: Dict = {
+        "preferences": {"voice_speed": "normal"},
+        "frequent_tasks": [{"action": "file_creation", "count": 5}],
+        "user_profile": {"name": "Test User"},
+        "conversation_patterns": ["greeting", "file_ops"],
+    }
+
+    p = tmp_path / "memory.json"
+    p.write_text(json.dumps(memory), encoding="utf-8")
+
+    loaded = json.loads(p.read_text(encoding="utf-8"))
+
+    assert "preferences" in loaded
+    assert "frequent_tasks" in loaded
+    assert loaded["user_profile"]["name"] == "Test User"
+    assert loaded["conversation_patterns"] == ["greeting", "file_ops"]
+
+
+# ---------------------------
+# Smart file operations (mocked)
+# ---------------------------
+
+def test_smart_file_operations_templates():
+    """Smart template selection should produce expected messaging."""
+    def create_smart_file(filename: str, content: str, file_type: str, template: str) -> str:
+        if template == "professional" and file_type == "email":
+            _ = f"""Subject: {filename}
 
 Dear Sir/Madam,
 
@@ -102,229 +137,133 @@ Best regards,
 
 ---
 Generated by ARIA Smart Assistant"""
-                return f"✅ Smart file created: {filename}.txt (Type: {file_type}, Template: {template})"
-            
-            return f"✅ Basic file created: {filename}"
-        
-        # Test different file types and templates
-        result1 = mock_create_smart_file("business_proposal", "Meeting request", "email", "professional")
-        result2 = mock_create_smart_file("project_doc", "Documentation", "markdown", "documentation")
-        
-        assert "Smart file created" in result1
-        assert "professional" in result1
-        assert "✅" in result2
-        
-        print("   ✅ Smart templates working")
-        print("   ✅ Professional email template")
-        print("   ✅ Documentation template")
-        
-    except Exception as e:
-        print(f"   ❌ Smart file operations test failed: {e}")
-        return False
-    
-    print("✅ ARIA Smart file operations tests passed!\n")
-    return True
+            return f"✅ Smart file created: {filename}.txt (Type: {file_type}, Template: {template})"
+        return f"✅ Basic file created: {filename}"
 
-def test_intelligent_analysis():
-    """Test ARIA's directory analysis capabilities"""
-    print("🧪 Testing ARIA Intelligent Analysis...")
-    
-    try:
-        # Create test directory structure
-        test_dir = Path("test_analysis")
-        test_dir.mkdir(exist_ok=True)
-        
-        # Create sample files
-        (test_dir / "document.pdf").touch()
-        (test_dir / "script.py").touch()
-        (test_dir / "image.jpg").touch()
-        (test_dir / "subdirectory").mkdir(exist_ok=True)
-        
-        # Mock analysis function
-        def mock_analyze_directory(directory_path, analysis_type):
-            """Mock directory analysis"""
-            path = Path(directory_path)
-            files = list(path.rglob('*'))
-            total_files = len([f for f in files if f.is_file()])
-            total_dirs = len([f for f in files if f.is_dir()])
-            
-            return f"""📊 Directory Analysis: {directory_path}
-                
-🔢 Statistics:
-- Files: {total_files}
-- Directories: {total_dirs}
-- Total Size: 0.01 MB
+    r1 = create_smart_file("business_proposal", "Meeting request", "email", "professional")
+    r2 = create_smart_file("project_doc", "Documentation", "markdown", "documentation")
 
-📁 Structure analyzed by ARIA Smart Assistant"""
-        
-        result = mock_analyze_directory(str(test_dir), "overview")
-        
-        assert "Directory Analysis" in result
-        assert "Statistics:" in result
-        assert "ARIA Smart Assistant" in result
-        
-        print("   ✅ Directory analysis working")
-        print("   ✅ File counting accurate")
-        print("   ✅ Detailed reporting")
-        
-        # Cleanup
-        import shutil
-        shutil.rmtree(test_dir)
-        
-    except Exception as e:
-        print(f"   ❌ Intelligent analysis test failed: {e}")
-        return False
-    
-    print("✅ ARIA Intelligent analysis tests passed!\n")
-    return True
+    assert "Smart file created" in r1 and "professional" in r1 and "email" in r1
+    assert r2.startswith("✅ Basic file created")
+
+
+# ---------------------------
+# Intelligent directory analysis (mocked)
+# ---------------------------
+
+def test_intelligent_analysis_counts(tmp_path: Path):
+    """Directory analyzer should count files/dirs accurately and report."""
+    # Create files/dirs
+    (tmp_path / "document.pdf").write_bytes(b"pdf")
+    (tmp_path / "script.py").write_text("print('x')", encoding="utf-8")
+    (tmp_path / "image.jpg").write_bytes(b"\xff\xd8\xff")
+    (tmp_path / "subdirectory").mkdir()
+
+    def analyze_directory(directory_path: str, analysis_type: str = "overview") -> str:
+        base = Path(directory_path)
+        all_paths: List[Path] = list(base.rglob("*"))
+        total_files = sum(p.is_file() for p in all_paths)
+        total_dirs = sum(p.is_dir() for p in all_paths)
+        total_size = sum(p.stat().st_size for p in all_paths if p.is_file())  # bytes
+        mb = total_size / (1024 * 1024)
+
+        return (
+            f"📊 Directory Analysis: {directory_path}\n\n"
+            f"🔢 Statistics:\n"
+            f"- Files: {total_files}\n"
+            f"- Directories: {total_dirs}\n"
+            f"- Total Size: {mb:.2f} MB\n\n"
+            f"📁 Structure analyzed by ARIA Smart Assistant"
+        )
+
+    report = analyze_directory(str(tmp_path))
+    assert "Directory Analysis:" in report
+    assert "- Files:" in report and "- Directories:" in report and "- Total Size:" in report
+    # We created 3 files and 1 subdirectory
+    assert "- Files: 3" in report
+    assert "- Directories: 1" in report
+    assert "ARIA Smart Assistant" in report
+
+
+# ---------------------------
+# Project structure creation (mocked)
+# ---------------------------
 
 def test_project_structure_creation():
-    """Test ARIA's project creation capabilities"""
-    print("🧪 Testing ARIA Project Structure Creation...")
-    
-    try:
-        # Mock project creation
-        def mock_create_project_structure(project_name, project_type, features):
-            """Mock project structure creation"""
-            if project_type.lower() == "python":
-                structure = {
-                    'src': ['__init__.py'],
-                    'tests': ['test_main.py'],
-                    'docs': ['README.md'],
-                    'root': ['requirements.txt', 'setup.py']
-                }
-                return f"🚀 Smart project structure created: output/projects/{project_name}"
-            
-            return f"✅ Project {project_name} created"
-        
-        result = mock_create_project_structure("test_app", "python", "AI features")
-        
-        assert "Smart project structure created" in result
-        assert "test_app" in result
-        
-        print("   ✅ Python project template")
-        print("   ✅ Directory structure creation")
-        print("   ✅ Boilerplate file generation")
-        
-    except Exception as e:
-        print(f"   ❌ Project creation test failed: {e}")
-        return False
-    
-    print("✅ ARIA Project creation tests passed!\n")
-    return True
-
-def test_conversation_context():
-    """Test ARIA's conversation context management"""
-    print("🧪 Testing ARIA Conversation Context...")
-    
-    try:
-        # Mock conversation history
-        conversation_history = [
-            {'type': 'user', 'content': 'Create a Python file', 'timestamp': '2025-08-27T10:00:00'},
-            {'type': 'assistant', 'content': 'I created a Python file for you', 'timestamp': '2025-08-27T10:00:05'},
-            {'type': 'user', 'content': 'Now analyze the directory', 'timestamp': '2025-08-27T10:01:00'}
-        ]
-        
-        # Test context building
-        def build_context(history):
-            if len(history) > 1:
-                context = "Recent conversation context:\n"
-                for entry in history[-3:]:
-                    context += f"- {entry['type']}: {entry['content'][:50]}\n"
-                return context
-            return ""
-        
-        context = build_context(conversation_history)
-        
-        assert "Recent conversation context" in context
-        assert "Create a Python file" in context
-        assert "analyze the directory" in context
-        
-        print("   ✅ Context retention working")
-        print("   ✅ Conversation history tracked")
-        print("   ✅ Context building functional")
-        
-    except Exception as e:
-        print(f"   ❌ Conversation context test failed: {e}")
-        return False
-    
-    print("✅ ARIA Conversation context tests passed!\n")
-    return True
-
-def test_reminder_system():
-    """Test ARIA's smart reminder system"""
-    print("🧪 Testing ARIA Reminder System...")
-    
-    try:
-        # Mock reminder creation
-        def mock_schedule_reminder(task, time, priority):
-            reminder = {
-                'task': task,
-                'time': time,
-                'priority': priority,
-                'created': '2025-08-27T10:00:00'
+    """Python project template should return a smart structure message."""
+    def create_project_structure(project_name: str, project_type: str, features: str) -> str:
+        if project_type.lower() == "python":
+            structure = {
+                "src": ["__init__.py"],
+                "tests": ["test_main.py"],
+                "docs": ["README.md"],
+                "root": ["requirements.txt", "setup.py"],
             }
-            return f"⏰ Smart reminder set: {task} (Priority: {priority}, Time: {time})"
-        
-        result = mock_schedule_reminder("Team meeting", "2 PM today", "high")
-        
-        assert "Smart reminder set" in result
-        assert "Team meeting" in result
-        assert "high" in result
-        
-        print("   ✅ Reminder creation working")
-        print("   ✅ Priority system functional")
-        print("   ✅ Time scheduling working")
-        
-    except Exception as e:
-        print(f"   ❌ Reminder system test failed: {e}")
-        return False
-    
-    print("✅ ARIA Reminder system tests passed!\n")
-    return True
+            assert all(k in structure for k in ("src", "tests", "docs", "root"))
+            return f"🚀 Smart project structure created: output/projects/{project_name}"
+        return f"✅ Project {project_name} created"
 
-def run_all_tests():
-    """Run all ARIA Smart Assistant tests"""
-    print("🚀 Starting ARIA Smart Assistant Test Suite")
-    print("=" * 60)
-    
-    tests = [
-        test_smart_assistant_initialization,
-        test_memory_system,
-        test_smart_file_operations,
-        test_intelligent_analysis,
-        test_project_structure_creation,
-        test_conversation_context,
-        test_reminder_system
+    msg = create_project_structure("test_app", "python", "AI features")
+    assert "Smart project structure created" in msg
+    assert msg.endswith("output/projects/test_app")
+
+
+# ---------------------------
+# Conversation context builder (mocked)
+# ---------------------------
+
+def test_conversation_context_builder():
+    """Context builder should format last entries and cap content length."""
+    history = [
+        {"type": "user", "content": "Create a Python file", "timestamp": "2025-08-27T10:00:00"},
+        {"type": "assistant", "content": "I created a Python file for you", "timestamp": "2025-08-27T10:00:05"},
+        {"type": "user", "content": "Now analyze the directory", "timestamp": "2025-08-27T10:01:00"},
     ]
-    
-    passed = 0
-    failed = 0
-    
-    for test in tests:
-        try:
-            if test():
-                passed += 1
-            else:
-                failed += 1
-        except Exception as e:
-            print(f"❌ Test {test.__name__} failed with exception: {e}")
-            failed += 1
-    
-    print("=" * 60)
-    print(f"🧪 ARIA TEST RESULTS:")
-    print(f"✅ Passed: {passed}")
-    print(f"❌ Failed: {failed}")
-    print(f"📊 Success Rate: {(passed/(passed+failed)*100):.1f}%")
-    print("=" * 60)
-    
-    if failed == 0:
-        print("🎉 All ARIA Smart Assistant tests passed!")
-        print("🚀 ARIA is ready for deployment!")
-    else:
-        print("⚠️ Some tests failed. Please review and fix issues.")
-    
-    return failed == 0
+
+    def build_context(h: List[Dict]) -> str:
+        if len(h) <= 1:
+            return ""
+        lines = ["Recent conversation context:"]
+        for entry in h[-3:]:
+            snippet = entry["content"][:50]
+            lines.append(f"- {entry['type']}: {snippet}")
+        return "\n".join(lines)
+
+    ctx = build_context(history)
+    assert "Recent conversation context:" in ctx
+    assert "Create a Python file" in ctx
+    assert "analyze the directory" in ctx
+
+
+# ---------------------------
+# Reminder system (mocked)
+# ---------------------------
+
+def test_reminder_system_creation():
+    """Reminder creation should embed task, priority, and time."""
+    def schedule_reminder(task: str, time: str, priority: str) -> str:
+        reminder = {
+            "task": task,
+            "time": time,
+            "priority": priority,
+            "created": "2025-08-27T10:00:00",
+        }
+        # Minimal validation
+        assert reminder["task"]
+        assert reminder["priority"] in {"low", "medium", "high"}
+        return f"⏰ Smart reminder set: {task} (Priority: {priority}, Time: {time})"
+
+    msg = schedule_reminder("Team meeting", "2 PM today", "high")
+    assert "Smart reminder set" in msg
+    assert "Team meeting" in msg
+    assert "(Priority: high, Time: 2 PM today)" in msg
+
+
+# ---------------------------
+# Optional: allow running as a script
+# ---------------------------
 
 if __name__ == "__main__":
-    run_all_tests()
+    # Running via: python test_smart_assistant.py
+    import pytest as _pytest
+    raise SystemExit(_pytest.main([os.path.abspath(__file__)]))
